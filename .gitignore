@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Environments
+venv/
+.env/
+
+# IDE
+.vscode/
+.idea/
+
+# Logs
+*.log
+logs/
+
+# Data / results
+results/
+tmp/
+
+# Experiments artifacts
+*.pt
+*.pth
+*.ckpt
+*.npy
+*.npz
+
+# Optional (реши сам)
+# figures/
+# reports/
+
+# Claude / generated
+CLAUDE_CODE*
+claude_code*
