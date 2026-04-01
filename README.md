@@ -1,88 +1,125 @@
-# PINN Special-Point Detector for 2D Bratu
+# Бифуркационный анализ УЧП с помощью нейронных сетей
 
-Bifurcation analysis via PINN: detect and classify singular points of the Frechet matrix surrogate along the solution branch of
+Курсовой проект, этап 1. Модельная задача — двумерное уравнение Брату.
+
+## Что делает проект
+
+Строит ветвь решений уравнения Брату при изменении параметра λ с помощью
+PINN (Physics-Informed Neural Networks), проходит через fold-точку и
+детектирует её несколькими способами.
+
+### Задача Брату
 
 ```
-Δu + λ·exp(u) = 0,   (x,y) ∈ (0,1)²,   u = 0 on ∂Ω
+Δu + λ·exp(u) = 0   на Ω = (0,1)²
+u = 0                на ∂Ω
 ```
 
-## Project structure
+При λ < λ* ≈ 6.81 существуют два решения (нижняя и верхняя ветвь),
+при λ = λ* они сливаются, при λ > λ* решений нет.
+
+## Структура проекта
 
 ```
-bifurcation_project/
-  problems/
-    base_problem.py        # abstract PDE interface
-    bratu_2d.py            # 2D Bratu implementation
-  pinn/
-    model.py               # MLP with tanh (configurable depth/width)
-    autograd_ops.py        # Laplacian, parameter helpers
-    residual_vector.py     # R(W,λ) — raw residual vector (not scalar loss)
-    parameter_utils.py     # flatten / count parameters
-  continuation/
-    warmstart_trainer.py   # train PINN at fixed λ with warm-start
-    branch_tracer.py       # walk λ grid, collect BranchPoint snapshots
-  analysis/
-    frechet_surrogate.py   # J_W = dR/dW,  r_λ = dR/dλ
-    svd_detector.py        # σ_min tracking, candidate detection
-    classifier.py          # classify via extended matrix J_* = [J_W | r_λ]
-    candidate_report.py    # JSON + Markdown report
-  experiments/
-    run_bratu_detector.py  # end-to-end script
-  utils/
-    config.py              # dataclass configs
-    io.py                  # CSV export
-    plotting.py            # bifurcation diagram + σ_min plot
-  tests/
-    test_shapes_and_values.py
+├── problems/
+│   ├── base_problem.py          # абстрактный класс задачи
+│   └── bratu_2d.py              # уравнение Брату: невязка, граничные условия, семплирование
+│
+├── pinn/
+│   ├── model.py                 # архитектура сети (MLP, 2→32→32→32→1, tanh)
+│   └── residual_vector.py       # вычисление невязки R = Δu + λ·exp(u)
+│
+├── continuation/
+│   ├── warmstart_trainer.py     # обучение при фиксированном λ (warm-start)
+│   ├── branch_tracer.py         # трассировка ветви по сетке λ
+│   └── arclength_continuation.py # norm-constrained continuation через fold
+│
+├── analysis/
+│   ├── physical/
+│   │   ├── frechet_pde.py       # матрица Фреше F = Δ_FD + λ·diag(exp(u*))
+│   │   ├── classifier.py        # Келлер-Антман + коранг
+│   │   ├── fold_refinement.py   # бисекция для уточнения λ*
+│   │   └── candidate_report.py  # генерация отчётов (JSON + Markdown)
+│   │
+│   └── pinn_native/
+│       ├── surrogate_jacobian.py   # J_W = dR/dθ и r_λ = dR/dλ
+│       └── projection_detector.py  # η = ||(I-P)r_λ|| / ||r_λ|| (TSVD + Tikhonov)
+│
+├── experiments/
+│   ├── run_bratu_continuation.py   # основной эксперимент: continuation + SVD-анализ
+│   ├── run_bratu_detector.py       # branch scan: Фреше vs гессиан
+│   ├── run_projection_detector.py  # проекционный детектор вдоль ветви
+│   └── run_projection_on_continuation.py  # проекция на continuation-ветви
+│
+├── utils/
+│   ├── config.py                # dataclass'ы для гиперпараметров
+│   ├── io.py                    # CSV сохранение
+│   └── plotting.py              # графики (бифуркационная диаграмма, σ_min, ...)
+│
+└── outputs/
+    ├── results/                 # CSV, JSON, чекпоинты
+    ├── figures/                 # графики
+    └── reports/                 # Markdown-отчёты
 ```
 
-## Installation
+## Как запустить
 
+### 1. Continuation + SVD-анализ (основной эксперимент)
 ```bash
-pip install torch numpy matplotlib pytest
+python experiments/run_bratu_continuation.py
 ```
+Строит ветвь через fold, считает σ_min(F) на каждой точке, генерирует графики.
 
-## Run the experiment
-
+### 2. Проекционный детектор
 ```bash
-cd bifurcation_project
+python experiments/run_projection_detector.py
+```
+Считает η = ||(I-P)r_λ|| / ||r_λ|| вдоль ветви, сравнивает с σ_min(F).
+
+### 3. Branch scan с детекцией (Фреше или гессиан)
+```bash
 python experiments/run_bratu_detector.py
 ```
+Фиксированные шаги по λ, на каждом — обучение + анализ.
 
-Outputs:
-| Path | Description |
-|------|-------------|
-| `results/bratu_branch.csv` | full branch table |
-| `results/bratu_candidates.json` | candidate special points |
-| `figures/bratu_branch.png` | bifurcation diagram |
-| `figures/bratu_sigma_min.png` | σ_min(λ) plot |
-| `reports/bratu_detector_report.md` | human-readable report |
+## Методы детекции fold-точек
 
-## Run sanity tests
+### 1. Физический критерий (baseline)
+Строим матрицу Фреше F = Δ_FD + λ·diag(exp(u*)) на конечно-разностной сетке
+и смотрим на σ_min(F). При fold σ_min → 0.
 
-```bash
-cd bifurcation_project
-pytest tests/ -v
+### 2. Гессианный критерий (не работает)
+Пробовали σ_min(H_GN) где H_GN = J_W^T · J_W — всегда ≈ 10⁻¹² из-за
+rank-deficiency (параметров сети больше, чем точек коллокации).
+
+### 3. Проекционный критерий (основной PINN-native результат)
+Проверяем: лежит ли r_λ = dR/dλ в образе J_W = dR/dθ?
+
+```
+η = ||(I - P_α) r_λ|| / ||r_λ||
 ```
 
-## Method overview
+где P_α — Тихоновский проектор с фильтр-факторами φ_i = σ²/(σ² + α²).
+На регулярных точках η ≈ 0.001, вблизи fold η ≈ 0.05–0.10.
 
-1. **Branch tracing**: warm-start PINN at each λ step.
-2. **Residual vector**: `R(W,λ)` — concatenation of PDE and BC residuals at *fixed* collocation points (not random).
-3. **Frechet surrogate**: `J_W = dR/dW` (row-by-row autograd), `r_λ = dR/dλ` (autograd or FD).
-4. **SVD detector**: track `σ_min(J_W)`; flag candidate when it is small or drops sharply.
-5. **Classifier**: check whether `r_λ ∈ image(J_W)` via least squares:
-   - `candidate_limit_point` — fold (r_λ not in image)
-   - `candidate_bifurcation_point` — branching (r_λ in image)
+Идея пришла из классики: критерий Келлера-Антмана проверяет f_λ ∉ Im(J_h),
+мы делаем то же самое но в пространстве параметров сети.
 
-Reference critical λ for 2D Bratu: **≈ 7.03** (literature sanity check).
+## Результаты
 
-## Configuration
+| Метод | Детекция λ* | Комментарий |
+|-------|-------------|-------------|
+| σ_min(F) | ≈ 6.9 | Эталон, требует FD-сетки |
+| σ_min(H_GN) | не работает | Rank-deficiency |
+| η (проекция, Тихонов) | ≈ 6.9 | Лучший PINN-native метод |
 
-All hyperparameters live in `utils/config.py`:
-- `TrainConfig` — epochs, lr, bc_weight, collocation counts
-- `DetectorConfig` — detection collocation sizes, SVD thresholds
-- `ModelConfig` — PINN architecture
-- `ExperimentConfig` — λ grid, device, output dirs
+## Зависимости
 
-Edit `experiments/run_bratu_detector.py` to change any of these.
+- Python 3.10+
+- PyTorch 2.0+
+- NumPy, Matplotlib
+
+## Автор
+
+Касаева София, БПМИ233, НИУ ВШЭ, 2026
+Научный руководитель: Томащук К.К.
